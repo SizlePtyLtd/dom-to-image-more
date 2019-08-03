@@ -256,7 +256,10 @@
                     if (source.cssText) {
                         target.cssText = source.cssText;
                         target.font = source.font; // here, we re-assign the font prop.
-                    } else copyProperties(source, target);
+                    } else {
+                        copyProperties(source, target);
+                    }
+                    target.fontStretch = 'normal';
 
                     function copyProperties(source, target) {
                         util.asArray(source).forEach(function(name) {
@@ -380,6 +383,7 @@
             mimeType: mimeType,
             dataAsUrl: dataAsUrl,
             isDataUrl: isDataUrl,
+            isSrcAsDataUrl: isSrcAsDataUrl,
             canvasToBlob: canvasToBlob,
             resolveUrl: resolveUrl,
             getAndEncode: getAndEncode,
@@ -427,6 +431,12 @@
 
         function isDataUrl(url) {
             return url.search(/^(data:)/) !== -1;
+        }
+
+        function isSrcAsDataUrl(text){
+            var DATA_URL_REGEX = /url\(['"]?(data:)([^'"]+?)['"]?\)/;
+
+            return text.search(DATA_URL_REGEX) !== -1;
         }
 
         function toBlob(canvas) {
@@ -650,7 +660,7 @@
         }
 
         function inlineAll(string, baseUrl, get) {
-            if (nothingToInline()) return Promise.resolve(string);
+            if (nothingToInline() || util.isSrcAsDataUrl(string)) return Promise.resolve(string);
 
             return Promise.resolve(string)
                 .then(readUrls)
@@ -694,6 +704,7 @@
 
         function readAll() {
             return Promise.resolve(util.asArray(document.styleSheets))
+                .then(loadExternalStyleSheets)
                 .then(getCssRules)
                 .then(selectWebFontRules)
                 .then(function(rules) {
@@ -710,10 +721,111 @@
                     });
             }
 
+            function loadExternalStyleSheets(styleSheets) {
+                return Promise.all(
+                    styleSheets.map(function (sheet) {
+                        if (sheet.href) {
+                            return fetch(sheet.href)
+                                .then(toText)
+                                .then(setBaseHref(sheet.href))
+                                .then(toStyleSheet);
+                        } else {
+                            return Promise.resolve(sheet);
+                        }
+                    })
+                );
+
+                function toText(response) {
+                    return response.text();
+                }
+
+                function setBaseHref(base) {
+                    base = base.split('/');
+                    base.pop();
+                    base = base.join('/');
+
+                    return function(text) {
+                        return util.isSrcAsDataUrl(text) ? text : text.replace(
+                            /url\(['"]?([^'"]+?)['"]?\)/g,
+                            addBaseHrefToUrl
+                        );
+                    };
+
+                    function addBaseHrefToUrl(match, p1) {
+                        var url = /^http/i.test(p1) ?
+                            p1 : resolveURL(p1, base);
+                        return 'url(\'' + url + '\')';
+                    }
+
+                    function resolveURL(url, base){
+                        if('string' !== typeof url || !url){
+                            return null; // wrong or empty url
+                        } else if(url.match(/^[a-z]+\:\/\//i)){
+                            return url; // url is absolute already
+                        } else if(url.match(/^\/\//)){
+                            return 'http:'+url; // url is absolute already
+                        } else if(url.match(/^[a-z]+\:/i)){
+                            return url; // data URI, mailto:, tel:, etc.
+                        } else if('string' !== typeof base){
+                            var a = document.createElement('a');
+                            a.href = url; // try to resolve url without base
+
+                            if (!a.pathname) {
+                                return null; // url not valid
+                            }
+
+                            return 'http://' + url;
+                        } else {
+                            base = resolveURL(base); // check base
+
+                            if(base===null){
+                                return null; // wrong base
+                            }
+                        }
+
+                        var a = document.createElement('a');
+                        a.href = base;
+
+                        if (url[0] === '/') {
+                            base = []; // rooted path
+                        } else{
+                            base = a.pathname.split('/'); // relative path
+                            base.pop();
+                        }
+
+                        url = url.split('/');
+                        for (var i = 0; i < url.length; ++i){
+                            if (url[i] === '.') { // current directory
+                                continue;
+                            }
+
+                            if (url[i] === '..') { // parent directory
+                                if ('undefined' === typeof base.pop() || base.length === 0) {
+                                    return null; // wrong url accessing non-existing parent directories
+                                }
+                            } else { // child directory
+                                base.push(url[i]);
+                            }
+                        }
+
+                        return a.protocol + '//' + a.hostname + base.join('/');
+                    }
+                }
+
+                function toStyleSheet(text) {
+                    var doc = document.implementation.createHTMLDocument('');
+                    var styleElement = document.createElement('style');
+
+                    styleElement.textContent = text;
+                    doc.body.appendChild(styleElement);
+
+                    return styleElement.sheet;
+                }
+            }
             function getCssRules(styleSheets) {
                 var cssRules = [];
                 styleSheets.forEach(function(sheet) {
-                    if (sheet.hasOwnProperty("cssRules")) {
+                    if (sheet.cssRules && typeof sheet.cssRules === 'object') {
                         try {
                             util.asArray(sheet.cssRules || []).forEach(cssRules.push.bind(cssRules));
                         } catch (e) {
