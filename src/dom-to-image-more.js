@@ -13,7 +13,9 @@
         // Default cache bust is false, it will use the cache
         cacheBust: false,
         // Use (existing) authentication credentials for external URIs (CORS requests)
-        useCredentials: false
+        useCredentials: false,
+        // Match nothing if this option is not set:
+        skipExternalFileMatch: new RegExp("$^")
     };
 
     var domtoimage = {
@@ -163,6 +165,12 @@
             domtoimage.impl.options.useCredentials = defaultOptions.useCredentials;
         } else {
             domtoimage.impl.options.useCredentials = options.useCredentials;
+        }
+
+        if (typeof(options.skipExternalFileMatch) === 'undefined'){
+            domtoimage.impl.options.skipExternalFileMatch = defaultOptions.skipExternalFileMatch;
+        } else {
+            domtoimage.impl.options.skipExternalFileMatch = options.skipExternalFileMatch;
         }
     }
 
@@ -637,7 +645,7 @@
                 result.push(match[1]);
             }
             return result.filter(function(url) {
-                return !util.isDataUrl(url);
+                return !util.isDataUrl(url) && !url.match(domtoimage.impl.options.skipExternalFileMatch);
             });
         }
 
@@ -724,6 +732,10 @@
             function loadExternalStyleSheets(styleSheets) {
                 return Promise.all(
                     styleSheets.map(function (sheet) {
+                        // do not load font files, just style sheets
+                        if (sheet.href.match(domtoimage.impl.options.skipExternalFileMatch)) {
+                            return toStyleSheet("");
+                        }
                         if (sheet.href) {
                             return fetch(sheet.href)
                                 .then(toText)
