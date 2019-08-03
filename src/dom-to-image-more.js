@@ -732,11 +732,11 @@
             function loadExternalStyleSheets(styleSheets) {
                 return Promise.all(
                     styleSheets.map(function (sheet) {
-                        // do not load font files, just style sheets
-                        if (sheet.href.match(domtoimage.impl.options.skipExternalFileMatch)) {
-                            return toStyleSheet("");
-                        }
                         if (sheet.href) {
+                            // do not load font files, just style sheets
+                            if (sheet.href.match(domtoimage.impl.options.skipExternalFileMatch)) {
+                                return toStyleSheet("");
+                            }
                             return fetch(sheet.href)
                                 .then(toText)
                                 .then(setBaseHref(sheet.href))
